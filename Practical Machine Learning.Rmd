@@ -1,0 +1,183 @@
+---
+title: "Practical Machine Learning"
+author: "Sofia Riccomagno"
+date: "18/05/2020"
+output: html_document
+---
+
+#Practical Machine Learning
+
+##Abstract
+In this document, we will predict how 6 partecipants perform various types of exercises, as described in the Background section, by analysing the "classe" variable in the training dataset. The resulting machine learning algorithm will then be applied to the test dataset and the predictions will be tested via the Course Project Prediction Quiz, online.
+
+##Background
+From the dataset's authors' website we learn how the data was gathered. An excerpt reads:
+
+"Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg)."
+
+Full source:
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+
+Read more [here](http:/groupware.les.inf.puc-rio.br/har#ixzz4Tjq8XRy5).
+
+##Data Loading
+  
+The environment is cleared of any previous data and assigned variables loaded onto it and the appropriate libraries are loaded onto RStudio.   
+```{r libraries, echo=TRUE, message=FALSE}
+rm(list=ls())  
+library(knitr)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(corrplot)
+library(gbm)
+set.seed(291)
+```
+  
+The datasets are then downloaded and the training set is divided into a 70/30 split, to have a training set and a testing set within the training set and leaving the testing set only for the predictions for the aforementioned quiz.
+
+```{r dataloading, echo=TRUE, collapse=TRUE}
+UrlTrain<-"http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+UrlTest<-"http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+train <- read.csv(url(UrlTrain))
+test  <- read.csv(url(UrlTest))
+
+InTrain  <- createDataPartition(train$classe, p=0.7, list=FALSE)
+TrainSet <- train[InTrain, ]
+TestSet  <- train[-InTrain, ]
+dim(TrainSet)
+dim(TestSet)
+```
+  
+Seen the dimesions of the datasets (160 variables), we decide to clean them up by removing variables with:  
+1. Near Zero Variance  
+2. Mostly NAs values  
+3. Identification values  
+
+### 1. Near Zero Variance   
+```{r nzv, echo=TRUE, collapse=TRUE}
+nzv <- nearZeroVar(TrainSet)
+TrainSet <- TrainSet[, -nzv]
+TestSet  <- TestSet[, -nzv]
+dim(TrainSet)
+dim(TestSet)
+```
+### 2. NAs  
+```{r nas, echo=TRUE, collapse=TRUE}
+NAs    <- sapply(TrainSet, function(x) mean(is.na(x))) > 0.95
+TrainSet <- TrainSet[, NAs==FALSE]
+TestSet  <- TestSet[, NAs==FALSE]
+dim(TrainSet)
+dim(TestSet)
+```
+### 3. IDs  
+```{r ids, echo=TRUE, collapse=TRUE}
+TrainSet <- TrainSet[, -(1:5)]
+TestSet  <- TestSet[, -(1:5)]
+dim(TrainSet)
+dim(TestSet)
+```
+
+##Exploratory Analysis
+With now more manageable datasets, we will perform a correlation analysis between the variables to see if anything sticks out.
+```{r correlation analysis, echo=TRUE}
+CorAn <- cor(TrainSet[, -54])
+corrplot(CorAn, order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+```
+
+The more correlated the variables are, the more saturated the colour will be in the matrix. If we exclude the obvious correlations (e.g. accel_belt_z to accel_belt_z), there aren't many other correlations of note.
+
+##Prediction Model Building
+For this assignment, we will use three different methods to build a model. The three models will then be run on the "mini" test dataset and the one with the highest accuracy will be used on the test dataset for the quiz.
+We will also include a confusion matrix at the end of each model to help the visualisation of its accuracy. 
+
+###1. Random Forest
+
+Firstly, we fit the model.         
+```{r fitforest, echo=TRUE}
+set.seed(291)
+ControlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+ModFitRF <- train(classe ~ ., data=TrainSet, method="rf",
+                          trControl=ControlRF)
+ModFitRF$finalModel
+```
+   
+Then, we run the model on the test dataset.         
+```{r predforest, echo=TRUE}
+PredRF <- predict(ModFitRF, newdata=TestSet)
+ConfMatRF <- confusionMatrix(PredRF, TestSet$classe)
+ConfMatRF
+```
+   
+Finally, we plot the confusion matrix in a more visually pleasing (and intuitive) way.      
+```{r confmatrf, echo=TRUE}
+plot(ConfMatRF$table, col = ConfMatRF$byClass, 
+     main = paste("Random Forest - Accuracy =",
+                  round(ConfMatRF$overall['Accuracy'], 4)))
+```
+
+###2. Decision Trees
+   
+Firstly, we fit the model.   
+```{r fitdectrees, echo=TRUE}
+set.seed(291)
+ModFitDT <- rpart(classe ~ ., data=TrainSet, method="class")
+fancyRpartPlot(ModFitDT)
+```  
+   
+Then, we run the model on the test dataset.     
+```{r preddectrees, echo=TRUE}
+PredDT <- predict(ModFitDT, newdata=TestSet, type="class")
+ConfMatDT <- confusionMatrix(PredDT, TestSet$classe)
+ConfMatDT
+```
+   
+Finally, we plot the confusion matrix in a more visually pleasing (and intuitive) way.      
+```{r confmatdt, echo=TRUE}
+plot(ConfMatDT$table, col = ConfMatDT$byClass, 
+     main = paste("Decision Tree - Accuracy =",
+                  round(ConfMatDT$overall['Accuracy'], 4)))
+```
+
+###3. Generalised Boosted Model  
+   
+Firstly, we fit the model.    
+```{r fitgbm, echo=TRUE}
+set.seed(291)
+ControlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+ModFitGBM  <- train(classe ~ ., data=TrainSet, method = "gbm",
+                    trControl = ControlGBM, verbose = FALSE)
+ModFitGBM$finalModel
+```
+  
+Then, we run the model on the test dataset.    
+```{r predgbm, echo=TRUE}
+PredGBM <- predict(ModFitGBM, newdata=TestSet)
+ConfMatGBM <- confusionMatrix(PredGBM, TestSet$classe)
+ConfMatGBM
+```
+    
+Finally, we plot the confusion matrix in a more visually pleasing (and intuitive) way.  
+```{r confmatgbm, echo=TRUE}
+plot(ConfMatGBM$table, col = ConfMatGBM$byClass, 
+     main = paste("GBM - Accuracy =", round(ConfMatGBM$overall['Accuracy'], 4)))
+```
+
+##Applying the Selected Model to the Test Dataset  
+The accuracies of the three models are:
+1. Random Forest: 0.9971  
+2. Decision Trees: 0.7784  
+3. Generalised Boosted Model: 0.9881  
+
+Since the Random Forest model is the most accurate one, we will apply it to the test dataset to predict the results needed for the aforementioned test.
+```{r applymodel, echo=TRUE}
+PredictTest <- predict(ModFitRF, newdata=test)
+PredictTest
+```
